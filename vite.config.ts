@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { defineConfig } from "vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
-import { BaseSequencer } from "vitest/node";
+import { BaseSequencer, type TestSpecification } from "vitest/node";
 import packageJson from "./package.json";
 import { testRpcPlugin } from "./test/rpc/rpc-server";
 
@@ -50,7 +50,7 @@ export default defineConfig(({ command, mode }) => {
                 name: "PIXI.live2d",
             },
             rollupOptions: {
-                external(id, parentId, isResolved) {
+                external(id) {
                     if (id === "pixi.js") {
                         throw new Error("do not import pixi.js, import @pixi/* instead");
                     }
@@ -102,7 +102,12 @@ export default defineConfig(({ command, mode }) => {
             include: ["**/*.test.ts", "**/*.test.js"],
             browser: {
                 enabled: true,
-                name: "chrome",
+                provider: 'webdriverio',
+                instances: [
+                    {
+                        browser: "chrome",
+                    },
+                ],
                 slowHijackESM: false,
             },
             setupFiles: ["./test/setup.ts"],
@@ -110,20 +115,26 @@ export default defineConfig(({ command, mode }) => {
                 sequencer: class MySequencer extends BaseSequencer {
                     // use the default sorting, then put bundle tests at the end
                     // to make sure they will not pollute the environment for other tests
-                    override async sort(files: Parameters<BaseSequencer["sort"]>[0]) {
-                        files = await super.sort(files);
+                    override async sort(files: TestSpecification[]) {
+                        const sortedFiles = await super.sort(files);
 
-                        const bundleTestFiles: typeof files = [];
+                        const bundleTestFiles: TestSpecification[] = [];
+                        const regularFiles: TestSpecification[] = [];
 
-                        files = files.filter(([project, file]) => {
-                            if (file.includes("bundle")) {
-                                bundleTestFiles.push([project, file]);
-                                return false;
+                        for (const file of sortedFiles) {
+                            if (typeof file === "string" && file.includes("bundle")) {
+                                bundleTestFiles.push(file);
+                            } else if (
+                                typeof file === "object" &&
+                                file.moduleId?.includes("bundle")
+                            ) {
+                                bundleTestFiles.push(file);
+                            } else {
+                                regularFiles.push(file);
                             }
-                            return true;
-                        });
+                        }
 
-                        return [...files, ...bundleTestFiles];
+                        return [...regularFiles, ...bundleTestFiles];
                     }
                 },
             },
